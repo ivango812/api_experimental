@@ -2,6 +2,8 @@
 
 Implementation of simple API for scoring service.
 
+Required `Python3`
+
 Service url: `/method/`
 
 Request - `json` in format:
@@ -58,11 +60,11 @@ Methods:
 
 Run a server:
 
-    api.py
+    python3 api.py
 
 Write log in the file:
 
-    api.py --log=<filename>
+    python3 api.py --log=<filename>
 
 
    

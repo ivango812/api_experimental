@@ -23,7 +23,7 @@ Methods:
 
 ### Methods details
     
-#online_score
+# online_score
 
 *arguments:*
 
@@ -41,7 +41,7 @@ Methods:
     {"score": <int>}
     
     
-#clients_interests
+# clients_interests
 
 *arguments:*
 

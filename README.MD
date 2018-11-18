@@ -6,7 +6,7 @@ Required `Python3`
 
 Service url: `/method/`
 
-Request - `json` in format:
+Request - `json` format:
 
     {
         account: <account name>
@@ -18,12 +18,12 @@ Request - `json` in format:
 
 Methods:
 
-* [online_score](online_score)
-* [clients_interests](clients_interests)
+* [online_score](#online_score)
+* [clients_interests](#clients_interests)
 
 ### Methods details
     
-**online_score**
+#####online_score
 
 *arguments:*
 
@@ -41,7 +41,7 @@ Methods:
     {"score": <int>}
     
     
-**clients_interests**
+#####clients_interests
 
 *arguments:*
 

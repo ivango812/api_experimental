@@ -37,6 +37,10 @@ GENDERS = {
 }
 
 
+class ValidationError(ValueError):
+    pass
+
+
 class BaseField:
     """
     Base field class - serving common field settings and handling validation and data clean top-level logic
@@ -49,9 +53,9 @@ class BaseField:
 
     def validate(self, value):
         if self.required and value is None:
-            raise ValueError('Отсутствует обязательное поле')
+            raise ValidationError('Required field')
         if not self.nullable and value in self.empty_values:
-            raise ValueError('Поле не должно быть пустым')
+            raise ValidationError('Field is empty')
 
     def validate_type(self, value):
         return value
@@ -72,7 +76,7 @@ class CharField(BaseField):
 
     def validate_type(self, value):
         if value is not None and not isinstance(value, str):
-            raise TypeError("Поле должно быть строкой")
+            raise TypeError("Field must be a string")
         return value
 
 
@@ -80,7 +84,7 @@ class ArgumentsField(BaseField):
 
     def validate_type(self, value):
         if value is not None and not isinstance(value, dict):
-            raise TypeError("Не переданы аргументы")
+            raise TypeError("Arguments required")
         return value
 
 
@@ -92,7 +96,7 @@ class EmailField(CharField):
 
     def validate_content(self, value):
         if '@' not in value:
-            raise ValueError("Строка не является email-ом")
+            raise ValidationError("String is not email")
 
 
 class PhoneField(BaseField):
@@ -101,7 +105,7 @@ class PhoneField(BaseField):
         if value is None:
             return value
         if not isinstance(value, (str, int)):
-            raise TypeError("Это поле должно быть задано числом или строкой")
+            raise TypeError("Field must be a string or an integer")
         value = str(value)
         return value
 
@@ -109,10 +113,10 @@ class PhoneField(BaseField):
         try:
             int(value)
         except ValueError:
-            raise ValueError("Поле должно содержать только цифры 0-9")
+            raise ValidationError("Field must contain only numbers")
 
         if len(value) != 11 or not value.startswith("7"):
-            raise ValueError("Неверно указан номер телефона")
+            raise ValidationError("Incorrect phone number, starts with '7'")
 
 
 class DateField(CharField):
@@ -124,7 +128,7 @@ class DateField(CharField):
         try:
             setattr(self, '_date', datetime.datetime.strptime(value, '%d.%m.%Y').date())
         except ValueError:
-            raise ValueError('Не соответствует дате в формете DD.MM.YYYY')
+            raise ValidationError("Date does not match the format 'DD.MM.YYYY'")
         return value
 
 
@@ -134,19 +138,19 @@ class BirthDayField(DateField):
         today = datetime.date.today()
         age = today - getattr(self, '_date')
         if age.days / 365.25 > 70:
-            raise ValueError('Возраст не должен быть > 70 лет')
+            raise ValidationError('Age must be <= 70 years')
 
 
 class GenderField(BaseField):
 
     def validate_type(self, value):
         if value is not None and not isinstance(value, int):
-            raise TypeError("Пол должен быть представлен числом 0, 1, 2")
+            raise TypeError("Sex must be a number 0, 1 or 2")
         return value
 
     def validate_content(self, value):
         if value not in GENDERS:
-            raise ValueError("Пол должен быть представлен числом 0, 1, 2")
+            raise ValidationError("Sex must be a number 0, 1 or 2")
 
 
 class ClientIDsField(BaseField):
@@ -154,12 +158,12 @@ class ClientIDsField(BaseField):
     def validate_type(self, value):
         if value is not None:
             if not isinstance(value, list) or not all(isinstance(v, int) for v in value):
-                raise TypeError("Должен быть список целых чисел")
+                raise TypeError("Must be a list of numbers")
         return value
 
     def validate_content(self, value):
         if not all(v >= 0 for v in value):
-            raise ValueError("Числа должны быть положительными")
+            raise ValidationError("Numbers must be only positive")
 
 
 class RequestMeta(type):
@@ -168,17 +172,13 @@ class RequestMeta(type):
     """
 
     def __new__(metaclass, class_name, class_parents, class_attr):
-        # filter only BaseField objects
-        api_fields = {
-                    filed_name: field
-                    for filed_name, field in class_attr.items()
-                    if isinstance(field, BaseField)
-                  }
-        class_attr_cleaned = {
-                    filed_name: field
-                    for filed_name, field in class_attr.items()
-                    if not isinstance(field, BaseField)
-                  }
+        api_fields = {}
+        class_attr_cleaned = {}
+        for filed_name, field in class_attr.items():
+            if isinstance(field, BaseField):
+                api_fields[filed_name] = field
+            else:
+                class_attr_cleaned[filed_name] = field
         class_attr_cleaned["_fields_raw_data"] = api_fields
 
         return super().__new__(metaclass, class_name, class_parents, class_attr_cleaned)
@@ -186,7 +186,7 @@ class RequestMeta(type):
 
 class Request(metaclass=RequestMeta):
     """
-    Top-level logic on Request handling - such as validation, errors
+    Top-level logic of Request handling - such as validation, errors
     """
     def __init__(self, request):
         self.request = request
@@ -212,7 +212,7 @@ class Request(metaclass=RequestMeta):
                 setattr(self, name, value)
                 if value not in field.empty_values:
                     self.non_empty_fields.append(name)
-            except (TypeError, ValueError) as e:
+            except (TypeError, ValidationError) as e:
                 self._errors[name] = str(e)
 
 
@@ -238,7 +238,7 @@ class OnlineScoreRequest(Request):
                 return
             if self.birthday and self.gender is not None:
                 return
-            self._errors["arguments"] = "Неверный список аргументов"
+            self._errors["arguments"] = "Incorrect arguments"
 
 
 class MethodRequest(Request):
@@ -253,30 +253,41 @@ class MethodRequest(Request):
         return self.login == ADMIN_LOGIN
 
 
-class OnlineScoreHandler:
+class MethodHandler:
 
-    @staticmethod
-    def process_request(request, context, store):
-        req = OnlineScoreRequest(request.arguments)
+    method_request = None
+
+    def process_request(self, request, context, store):
+        req = self.method_request(request.arguments)
         if not req.is_valid():
             return req.errors, INVALID_REQUEST
+        return self.method_handler(req, request, context, store)
+
+    def method_handler(self, method_req, request, context, store):
+        pass
+
+
+class OnlineScoreHandler(MethodHandler):
+
+    method_request = OnlineScoreRequest
+
+    def method_handler(self, method_req, request, context, store):
         if request.is_admin:
             score = 42
         else:
-            score = get_score(store, req.phone, req.email, req.birthday, req.gender, req.first_name, req.last_name)
-        context["has"] = req.non_empty_fields
+            score = get_score(store, method_req.phone, method_req.email, method_req.birthday, method_req.gender,
+                              method_req.first_name, method_req.last_name)
+        context["has"] = method_req.non_empty_fields
         return {"score": score}, OK
 
 
-class ClientsInterestsHandler:
+class ClientsInterestsHandler(MethodHandler):
 
-    @staticmethod
-    def process_request(request, context, store):
-        req = ClientsInterestsRequest(request.arguments)
-        if not req.is_valid():
-            return req.errors, INVALID_REQUEST
-        context["nclients"] = len(req.client_ids)
-        response_body = {cid: get_interests(store, cid) for cid in req.client_ids}
+    method_request = ClientsInterestsRequest
+
+    def method_handler(self, method_req, request, context, store):
+        context["nclients"] = len(method_req.client_ids)
+        response_body = {cid: get_interests(store, cid) for cid in method_req.client_ids}
         return response_body, OK
 
 
@@ -324,8 +335,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(bytes(data_string).decode())
-        except Exception as e:
-            # print('Exception=', e)
+        except:
             code = BAD_REQUEST
 
         if request:

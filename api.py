@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-# import abc
 import json
 import datetime
 import logging
@@ -10,6 +9,7 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from scoring import get_score, get_interests
+from store import StoreRedis
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -116,7 +116,7 @@ class PhoneField(BaseField):
             raise ValidationError("Field must contain only numbers")
 
         if len(value) != 11 or not value.startswith("7"):
-            raise ValidationError("Incorrect phone number, starts with '7'")
+            raise ValidationError("Incorrect phone number, 11 letters and starts with '7'")
 
 
 class DateField(CharField):
@@ -322,7 +322,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = StoreRedis(host='localhost', port=6379)
 
     @staticmethod
     def get_request_id(headers):

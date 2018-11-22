@@ -1,38 +1,80 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import hashlib
-import datetime
-import functools
 import unittest
-
+import functools
 import api
+from store import StoreRedis
+import scoring
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+import hashlib
+import time
 
-# curl -X POST  -H "Content-Type: application/json; charset=utf-8" -d '{"account": "horns&hoofs", "login": "h@f", "method": "clients_interests", "token": "1f8d8c5bf23fc6d11ee9f81aa3d093806a326a1ae6c16f4cbdb1106b2f13bb93e2cb951f078ebe4791a9d05b1e25efd93193937cb1dd88652d895989573cc7b7", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
 
 def cases(cases):
-    def decorator(f):
-        @functools.wraps(f)
+    def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args):
-            for c in cases:
-                new_args = args + (c if isinstance(c, tuple) else (c,))
-                f(*new_args)
+            for case in cases:
+                if not isinstance(case, tuple):
+                    case = (case,)
+                args_with_case = args + case
+                func(*args_with_case)
         return wrapper
     return decorator
+
+
+def cases_result(cases):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args):
+            for case in cases:
+                case_args = case[0]
+                case_result = case[1]
+                if not isinstance(case_args, tuple):
+                    case_args = (case_args,)
+                args_with_case = args + case_args + (case_result,)
+                func(*args_with_case)
+        return wrapper
+    return decorator
+
+
+class StoreMock(StoreRedis):
+
+    storage = {}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def set(self, key, value):
+        self.storage[key] = value
+
+    def get(self, key):
+        return self.storage[key] if key in self.storage else None
+
+    def cache_set(self, key, value, expire=None):
+        self.set(key, value)
+
+    def cache_get(self, key):
+        return self.get(key)
 
 
 class TestSuite(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        self.settings = {}
+        self.store_mock = StoreMock()
+        scoring.gen_interests(self.store_mock, 0, 10)
+        self.store = StoreRedis(host='localhost', port=6379)
 
     def get_response(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store_mock)
 
     def set_valid_auth(self, request):
         if request.get("login") == api.ADMIN_LOGIN:
-            request["token"] = hashlib.sha512(str(datetime.datetime.now().strftime("%Y%m%d%H") + api.ADMIN_SALT).encode('utf-8')).hexdigest()
+            request["token"] = hashlib.sha512(str(datetime.now().strftime("%Y%m%d%H")
+                                                  + api.ADMIN_SALT).encode('utf-8')).hexdigest()
         else:
             msg = str(request.get("account", "") + request.get("login", "") + api.SALT).encode('utf-8')
             request["token"] = hashlib.sha512(msg).hexdigest()
@@ -40,6 +82,217 @@ class TestSuite(unittest.TestCase):
     def test_empty_request(self):
         _, code = self.get_response({})
         self.assertEqual(api.INVALID_REQUEST, code)
+
+# =================
+# Unit test section
+# =================
+
+    @cases_result([
+        [{'phone': '+1232938293824', 'email': '1test@test.com', 'birthday': '09.01.1986', 'gender': 1,
+          'first_name': 'first', 'last_name': 'last'}, 5.0],
+        [{'phone': '+1232938293824', 'email': '2test@test.com'}, 3.0],
+        [{'phone': '+1232938293824', 'email': '3test@test.com', 'birthday': '09.01.1986'}, 3.0],
+        [{'phone': '+1232938293824', 'email': '4test@test.com', 'gender': 1}, 3.0],
+        [{'phone': '+1232938293824', 'email': '5test@test.com', 'birthday': '09.01.1986', 'gender': 1}, 4.5],
+        [{'phone': '+1232938293824', 'email': '6test@test.com', 'birthday': '09.01.1986', 'gender': 1,
+          'first_name': 'last'}, 4.5],
+        [{'phone': '+1232938293824', 'email': '7test@test.com', 'birthday': '09.01.1986', 'gender': 1,
+          'last_name': 'last'}, 4.5],
+        [{'phone': '+1232938293824', 'email': '8test@test.com', 'first_name': 'first', 'last_name': 'last'}, 3.5],
+        [{'phone': '+1232938293824', 'email': None, 'first_name': 'first', 'last_name': 'last'}, 2.0],
+        [{'phone': None, 'email': '8test@test.com', 'first_name': 'first', 'last_name': 'last'}, 2.0],
+        [{'phone': None, 'email': None, 'first_name': 'first', 'last_name': 'last'}, 0.5],
+        [{'phone': None, 'email': None, 'first_name': 'first'}, 0.0],
+        [{'phone': None, 'email': None, 'last_name': 'last'}, 0.0],
+
+    ])
+    def test_get_score(self, arguments, result):
+        score = scoring.get_score(self.store_mock, **arguments)
+        self.assertEqual(result, score, "get_score({}) wrong result".format(arguments))
+
+    @cases([
+        {'phone': '71234567890', 'email': '1test@test.com', 'gender': 1, 'first_name': 'first', 'last_name': 'last',
+         'birthday': datetime.strftime(datetime.now() - relativedelta(years=+70), '%d.%m.%Y'),
+         },
+        {'phone': 71234567890, 'email': '1test.dsfdsfdsf@test.com', 'gender': 2, 'first_name': 'first2',
+         'last_name': 'last2',
+         'birthday': datetime.strftime(datetime.now(), '%d.%m.%Y'),
+         },
+    ])
+    def test_OnlineScoreRequest_valid_fields(self, arguments):
+        request = api.OnlineScoreRequest(arguments)
+        request.validate()
+        self.assertEqual(str(arguments['phone']), request.phone)
+        self.assertEqual(arguments['email'], request.email)
+        self.assertEqual(arguments['birthday'], request.birthday)
+        self.assertEqual(arguments['gender'], request.gender)
+        self.assertEqual(arguments['first_name'], request.first_name)
+        self.assertEqual(arguments['last_name'], request.last_name)
+        self.assertFalse(request.errors)
+        self.assertTrue(request.is_valid(), 'is_valid()')
+
+    @cases([
+        {'phone': '10987654321', 'birthday': '09.01.1986', 'gender': 1, 'first_name': 'first', 'last_name': 'last'},
+    ])
+    def test_OnlineScoreRequest_AttributeError(self, arguments):
+        request = api.OnlineScoreRequest(arguments)
+        request.validate()
+        # self.assertRaises(AttributeError, getattr, request, 'phone')
+        with self.assertRaises(AttributeError): request.phone
+
+    @cases([
+        {'phone': '10987654321'},
+        {'phone': '+70987654321'},
+        {'phone': '7(098)765-43-21'},
+    ])
+    def test_OnlineScoreRequest_validate_phone(self, arguments):
+        request = api.OnlineScoreRequest(arguments)
+        request.validate()
+        err = request.errors
+        self.assertEqual(1, len(err))
+        self.assertTrue(err['phone'])
+
+    @cases([
+        {'gender': 1, 'birthday': 9011986},
+        {'gender': 1, 'birthday': '01.13.2000'},
+        {'gender': 1, 'birthday': datetime.strftime(datetime.now() - relativedelta(years=+70, days=+1), '%d.%m.%Y')},
+        {'gender': 1, 'birthday': datetime.strftime(datetime.now() - relativedelta(years=+170), '%d.%m.%Y')},
+    ])
+    def test_OnlineScoreRequest_validate_birthday(self, arguments):
+        request = api.OnlineScoreRequest(arguments)
+        request.validate()
+        err = request.errors
+        self.assertEqual(1, len(err), "errors: {}, arguments={}".format(err, arguments))
+        self.assertTrue(err['birthday'])
+
+    @cases([
+        {'email': 'email(at)domain.com'},
+    ])
+    def test_OnlineScoreRequest_validate_email(self, arguments):
+        request = api.OnlineScoreRequest(arguments)
+        request.validate()
+        err = request.errors
+        self.assertEqual(1, len(err))
+        self.assertTrue(err['email'])
+
+    @cases([
+        {'account': 'horns&hoofs', 'login': 'admin', 'method': 'clients_interests', 'arguments': {'a': 1, 'b': 2}},
+    ])
+    def test_ok_auth_admin(self, arguments):
+        self.set_valid_auth(arguments)
+        request = api.MethodRequest(arguments)
+        request.validate()
+        self.assertTrue(request.is_valid())
+        self.assertFalse(request.errors)
+        self.assertTrue(api.check_auth(request), "errors={}".format(request.errors))
+        self.assertTrue(request.is_admin)
+
+    @cases([
+        {'account': 'horns&hoofs', 'login': 'admin', 'method': 'clients_interests', 'arguments': {'a': 1, 'b': 2}},
+    ])
+    def test_invalid_auth_admin(self, arguments):
+        self.set_valid_auth(arguments)
+        arguments['login'] = 'admin1'
+        request = api.MethodRequest(arguments)
+        request.validate()
+        self.assertTrue(request.is_valid())
+        self.assertFalse(request.errors)
+        self.assertFalse(api.check_auth(request), "errors={}".format(request.errors))
+        self.assertFalse(request.is_admin)
+
+    @cases([
+        {'account': 'horns&hoofs', 'login': 'h&f', 'method': 'clients_interests', 'arguments': {'a': 1, 'b': 2}},
+    ])
+    def test_ok_auth(self, arguments):
+        self.set_valid_auth(arguments)
+        request = api.MethodRequest(arguments)
+        request.validate()
+        self.assertTrue(request.is_valid())
+        self.assertFalse(request.errors)
+        self.assertTrue(api.check_auth(request))
+        self.assertFalse(request.is_admin)
+
+    @cases([
+        {'account': 'horns&hoofs', 'login': 'h&f', 'method': 'clients_interests', 'arguments': {'a': 1, 'b': 2}},
+    ])
+    def test_invalid_auth(self, arguments):
+        self.set_valid_auth(arguments)
+        arguments['login'] = 'f&f'
+        request = api.MethodRequest(arguments)
+        request.validate()
+        self.assertTrue(request.is_valid())
+        self.assertFalse(request.errors)
+        self.assertFalse(api.check_auth(request))
+        self.assertFalse(request.is_admin)
+
+    @cases([
+        {'client_ids': [1, 2, 3], 'date': '01.01.2001'},
+        {'client_ids': [0, 2, 3, 5, 6, 7], 'date': '31.12.1900'},
+    ])
+    def test_ClientsInterestsRequest_valid_fields(self, arguments):
+        request = api.ClientsInterestsRequest(arguments)
+        request.validate()
+        self.assertEqual(arguments['client_ids'], request.client_ids)
+        self.assertEqual(arguments['date'], request.date)
+        self.assertFalse(request.errors)
+        self.assertTrue(request.is_valid(), 'is_valid()')
+
+    @cases([
+        {'client_ids': [1, 2, 3, 'a'], 'date': '01.01.2001'},
+        {'client_ids': 1, 'date': '01.12.1900'},
+    ])
+    def test_ClientsInterestsRequest_validate_client_ids(self, arguments):
+        request = api.ClientsInterestsRequest(arguments)
+        request.validate()
+        err = request.errors
+        self.assertEqual(1, len(err))
+        self.assertTrue(err['client_ids'])
+
+    @cases([
+        {'client_ids': [1, 2, 3], 'date': '32.01.2001'},
+        {'client_ids': [1, 2, 3], 'date': 1012001},
+    ])
+    def test_ClientsInterestsRequest_validate_date(self, arguments):
+        request = api.ClientsInterestsRequest(arguments)
+        request.validate()
+        err = request.errors
+        self.assertEqual(1, len(err))
+        self.assertTrue(err['date'])
+
+    def test_get_interests(self):
+        for i in range(0, 10):
+            res = scoring.get_interests(self.store_mock, i)
+            self.assertTrue(isinstance(res, list) and len(res) == 2)
+
+    @cases([
+        {'key': 'key2', 'value': '1234567890'},
+        # {'key': 'key1', 'value': 1234567890}, # cache saves only str
+        # {'key': 'key3', 'value': [1, 2, 3]}, # cache saves only str
+    ])
+    def test_store_cache(self, arguments):
+        key = arguments['key']
+        value = arguments['value']
+        self.store.cache_set(key, value, 3)
+        time.sleep(1)
+        self.assertEqual(self.store.cache_get(key), value, 'Cache is not saved for value {}({})!'.format(type(value), value))
+        time.sleep(2)
+        self.assertEqual(self.store.cache_get(key), None, 'Cache is not expired!')
+
+    @cases([
+        {'key': 'key2', 'value': '1234567890'},
+        # {'key': 'key1', 'value': 1234567890}, # cache saves only str
+        # {'key': 'key3', 'value': [1, 2, 3]}, # cache saves only str
+    ])
+    def test_store_set_get(self, arguments):
+        key = arguments['key']
+        value = arguments['value']
+        self.store.set(key, value)
+        self.assertEqual(self.store.get(key), value, 'Error store.get({})'.format(key))
+
+
+# ========================
+# Functional tests section
+# ========================
 
     @cases([
         {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
@@ -127,7 +380,7 @@ class TestSuite(unittest.TestCase):
         self.assertTrue(len(response))
 
     @cases([
-        {"client_ids": [1, 2, 3], "date": datetime.datetime.today().strftime("%d.%m.%Y")},
+        {"client_ids": [1, 2, 3], "date": datetime.today().strftime("%d.%m.%Y")},
         {"client_ids": [1, 2], "date": "19.07.2017"},
         {"client_ids": [0]},
     ])

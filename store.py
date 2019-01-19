@@ -2,9 +2,9 @@ import redis
 import logging
 
 
-class StoreRedis:
+class RedisLayer:
 
-    red = None
+    connection = None
 
     def __init__(self, host='localhost', port=6379, socket_timeout=2, socket_connect_timeout=5, attempts=5):
         self.db = 0
@@ -13,18 +13,36 @@ class StoreRedis:
         self.port = port
         self.socket_timeout = socket_timeout
         self.socket_connect_timeout = socket_connect_timeout
-        self.connect()
-        self.red.flushdb()
+
+    def connect(self):
+        self.connection = redis.StrictRedis(host=self.host, port=self.port, db=self.db,
+                                            decode_responses=True,
+                                            socket_timeout=self.socket_timeout,
+                                            socket_connect_timeout=self.socket_connect_timeout)
+        self.connection.flushdb()
+
+    def get(self, key):
+        return self.connection.get(key)
+
+    def set(self, key, value, expire=None):
+        self.connection.set(key, value, expire)
+
+
+class Storage:
+
+    storage = None
+    # red = None
+
+    def __init__(self, storage=storage, attempts=5):
+        self.attempts = attempts
+        self.storage = storage
 
     def connect(self):
         for i in range(self.attempts):
             try:
-                self.red = redis.StrictRedis(host=self.host, port=self.port, db=self.db,
-                                             decode_responses=True,
-                                             socket_timeout=self.socket_timeout,
-                                             socket_connect_timeout=self.socket_connect_timeout)
+                self.storage.connect()
             except Exception as e:
-                if i < self.attempts-1:
+                if i < self.attempts:
                     logging.info(e)
                 else:
                     raise
@@ -38,13 +56,13 @@ class StoreRedis:
                 self.connect()
 
     def set(self, key, value):
-        self.try_with_repeats(self.red.set, [key, value])
+        self.try_with_repeats(self.storage.set, [key, value])
 
     def get(self, key):
-        return self.try_with_repeats(self.red.get, [key])
+        return self.try_with_repeats(self.storage.get, [key])
 
     def cache_set(self, key, value, expire=None):
-        self.try_with_repeats(self.red.set, [key, value, expire])
+        self.try_with_repeats(self.storage.set, [key, value, expire])
 
     def cache_get(self, key):
         return self.get(key)

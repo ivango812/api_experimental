@@ -1,31 +1,22 @@
 import hashlib
 import datetime
-import functools
 import unittest
-
+from ..test_helpers import cases
 import api, scoring, store
 
 # curl -X POST  -H "Content-Type: application/json; charset=utf-8" -d '{"account": "horns&hoofs", "login": "h@f", "method": "clients_interests", "token": "1f8d8c5bf23fc6d11ee9f81aa3d093806a326a1ae6c16f4cbdb1106b2f13bb93e2cb951f078ebe4791a9d05b1e25efd93193937cb1dd88652d895989573cc7b7", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
-
-def cases(cases):
-    def decorator(f):
-        @functools.wraps(f)
-        def wrapper(*args):
-            for c in cases:
-                new_args = args + (c if isinstance(c, tuple) else (c,))
-                f(*new_args)
-        return wrapper
-    return decorator
 
 
 class TestSuite(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        self.settings = store.StoreRedis(host='localhost', port=6379)
+        self.storage = store.Storage(storage=store.RedisLayer(host='localhost', port=6379))
+        self.storage.connect()
+        scoring.gen_interests(self.storage, 0, 10)
 
     def get_response(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.storage)
 
     def set_valid_auth(self, request):
         if request.get("login") == api.ADMIN_LOGIN:

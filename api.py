@@ -9,7 +9,7 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from scoring import get_score, get_interests
-from store import StoreRedis
+from store import Storage, RedisLayer
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -135,6 +135,7 @@ class DateField(CharField):
 class BirthDayField(DateField):
 
     def validate_content(self, value):
+        value = self.validate_type(value)
         today = datetime.date.today()
         age = today - getattr(self, '_date')
         if age.days / 365.25 > 70:
@@ -149,6 +150,7 @@ class GenderField(BaseField):
         return value
 
     def validate_content(self, value):
+        value = self.validate_type(value)
         if value not in GENDERS:
             raise ValidationError("Sex must be a number 0, 1 or 2")
 
@@ -322,7 +324,9 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = StoreRedis(host='localhost', port=6379)
+    redis = RedisLayer(host='localhost', port=6379)
+    store = Storage(storage=redis)
+    store.connect()
 
     @staticmethod
     def get_request_id(headers):

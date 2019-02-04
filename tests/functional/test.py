@@ -1,8 +1,11 @@
-import hashlib
 import datetime
+import hashlib
 import unittest
-from ..test_helpers import cases
-import api, scoring, store
+
+import api
+import scoring
+import store
+from tests.test_helpers import cases
 
 # curl -X POST  -H "Content-Type: application/json; charset=utf-8" -d '{"account": "horns&hoofs", "login": "h@f", "method": "clients_interests", "token": "1f8d8c5bf23fc6d11ee9f81aa3d093806a326a1ae6c16f4cbdb1106b2f13bb93e2cb951f078ebe4791a9d05b1e25efd93193937cb1dd88652d895989573cc7b7", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
 

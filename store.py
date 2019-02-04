@@ -1,5 +1,6 @@
-import redis
 import logging
+import redis
+import time
 
 
 class RedisLayer:
@@ -28,14 +29,25 @@ class RedisLayer:
         self.connection.set(key, value, expire)
 
 
+def try_with_repeats(func):
+    def wrapper(self, *args):
+        for i in range(self.attempts):
+            try:
+                return func(self, *args)
+            except (TimeoutError, ConnectionError):
+                self.connect()
+    return wrapper
+
+
 class Storage:
 
     storage = None
     # red = None
 
-    def __init__(self, storage=storage, attempts=5):
+    def __init__(self, storage=storage, attempts=5, attempts_timeout=1):
         self.attempts = attempts
         self.storage = storage
+        self.attempts_timeout = attempts_timeout
 
     def connect(self):
         for i in range(self.attempts):
@@ -44,25 +56,21 @@ class Storage:
             except Exception as e:
                 if i < self.attempts:
                     logging.info(e)
+                    time.sleep(self.attempts_timeout)
                 else:
                     raise
 
-    def try_with_repeats(self, func, arguments):
-        for i in range(self.attempts):
-            try:
-                res = func(*arguments)
-                return res
-            except (TimeoutError, ConnectionError):
-                self.connect()
-
+    @try_with_repeats
     def set(self, key, value):
-        self.try_with_repeats(self.storage.set, [key, value])
+        self.storage.set(key, value)
 
+    @try_with_repeats
     def get(self, key):
-        return self.try_with_repeats(self.storage.get, [key])
+        return self.storage.get(key)
 
+    @try_with_repeats
     def cache_set(self, key, value, expire=None):
-        self.try_with_repeats(self.storage.set, [key, value, expire])
+        self.storage.set(key, value, expire)
 
     def cache_get(self, key):
         return self.get(key)

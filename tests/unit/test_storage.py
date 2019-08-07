@@ -4,7 +4,7 @@
 import unittest
 
 from .mock import StorageDBLayerMockMem, StorageDBLayerMockAttempsCounter
-from store import Storage, RedisLayer
+from store import Storage
 
 
 class TestStorageSuite(unittest.TestCase):
@@ -13,13 +13,11 @@ class TestStorageSuite(unittest.TestCase):
         pass
 
     def test_store_set_get(self):
-        redis = RedisLayer(host='localhost', port=6379)
-        storage = Storage(storage=redis)
-        storage.connect()
+        storage_dblayer_mock = StorageDBLayerMockMem()
         key = 'key2'
         value = '1234567890'
-        storage.set(key, value)
-        self.assertEqual(storage.get(key), value, 'Error store.get({})'.format(key))
+        storage_dblayer_mock.set(key, value)
+        self.assertEqual(storage_dblayer_mock.get(key), value, 'Error store.get({})'.format(key))
 
     def test_Storage_attempts_on_ConnectionError(self):
         storage_dblayer_mock = StorageDBLayerMockAttempsCounter()

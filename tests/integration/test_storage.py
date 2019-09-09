@@ -24,6 +24,7 @@ class TestStorageSuite(unittest.TestCase):
         self.assertEqual(self.storage.attempts_connect_counter, 0)
         del self.storage_db.connection
         self.storage.set('id', 42)
+        self.assertEqual(self.storage.get('id'), '42')
         self.assertEqual(self.storage.attempts_decorator_counter, 1)
         self.assertEqual(self.storage.attempts_connect_counter, 1)
 
@@ -32,7 +33,7 @@ class TestStorageSuite(unittest.TestCase):
         self.assertEqual(self.storage.attempts_connect_counter, 0)
         self.storage.set('id', 42)
         del self.storage_db.connection
-        self.storage.get('id')
+        self.assertEqual(self.storage.get('id'), None)  # Redis runs FLUSHDB if connection closed
         self.assertEqual(self.storage.attempts_decorator_counter, 1)
         self.assertEqual(self.storage.attempts_connect_counter, 1)
 

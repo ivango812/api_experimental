@@ -2,6 +2,9 @@ import logging
 import redis
 import time
 
+logging.basicConfig(filename='test.log', level=logging.DEBUG,
+                    format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
+
 
 class RedisLayer:
 
@@ -34,14 +37,19 @@ def try_with_repeats(func):
         for i in range(self.attempts):
             try:
                 return func(self, *args)
-            except (TimeoutError, ConnectionError):
+            except (TimeoutError, ConnectionError, AttributeError) as e:
+                self.attempts_decorator_counter += 1
+                logging.info('Error {}() call, trying reconnect: {} ...'.format(func, i + 1))
                 self.connect()
+                self.attempts_connect_counter += 1
     return wrapper
 
 
 class Storage:
 
     storage = None
+    attempts_connect_counter = 0
+    attempts_decorator_counter = 0
     # red = None
 
     def __init__(self, storage=storage, attempts=5, attempts_timeout=1):
@@ -55,7 +63,8 @@ class Storage:
                 self.storage.connect()
             except Exception as e:
                 if i < self.attempts:
-                    logging.info(e)
+                    self.attempts_connect_counter += 1
+                    logging.info('Connection retry: {}'.format(i + 1))
                     time.sleep(self.attempts_timeout)
                 else:
                     raise
@@ -68,7 +77,6 @@ class Storage:
     def get(self, key):
         return self.storage.get(key)
 
-    @try_with_repeats
     def cache_set(self, key, value, expire=None):
         self.storage.set(key, value, expire)
 
